@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: rinha-redis
+    command: redis-server --save "" --appendonly no --protected-mode no --loadmodule /opt/redis-stack/lib/redistimeseries.so
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.12"
+          memory: "43MB"
+  
+  api1: &api
+    build:
+      context: ./pagamentos
+    hostname: api1
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: "0.59"
+          memory: "125MB"
+  
+  api2:
+    <<: *api
+    hostname: api2
+  
+  load-balancer:
+    build:
+      context: ./load-balancer
+    container_name: rinha-load-balancer
+    ports:
+      - "9999:9999"
+    depends_on:
+      - api1
+      - api2
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: "57MB"
+
+networks:
+  backend:
+    driver: bridge
+  payment-processor:
+    external: true
