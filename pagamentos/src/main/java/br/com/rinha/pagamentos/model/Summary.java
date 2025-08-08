@@ -4,8 +4,6 @@ import java.math.BigDecimal;
 
 public class Summary {
 
-	public static final Summary EMPTY = new Summary(0, BigDecimal.ZERO);
-
 	private long totalRequests;
 	private BigDecimal totalAmount;
 

@@ -43,6 +43,8 @@ public class PaymentService {
 
 	@Value("${processor.default.payments.url}")
 	private String processorDefaultUrl;
+	@Value("${processor.fallback.payments.url}")
+	private String processorFallbackUrl;
 
 	public PaymentService(
 			@Qualifier("reactiveQueuedRedisTemplate") ReactiveRedisTemplate<String, QueuedPayment> reactiveQueuedRedisTemplate,
@@ -60,10 +62,24 @@ public class PaymentService {
 	}
 
 	public void processPayment(QueuedPayment payment) {
+		final boolean isDefaultUp = healthMonitor.isDefaultProcessorAvailable();
+		final boolean isFallbackUp = healthMonitor.isFallbackProcessorAvailable();
 		final PaymentSent paymentSent = new PaymentSent(payment);
 
-		if (healthMonitor.isDefaultProcessorAvailable()) {
+		if (isDefaultUp && isFallbackUp) {
 			trySendAndPersist("default", processorDefaultUrl, paymentSent)
+					.filter(Boolean::booleanValue)
+					.switchIfEmpty(trySendAndPersist("fallback", processorFallbackUrl, paymentSent))
+					.filter(Boolean::booleanValue)
+					.switchIfEmpty(requeue(payment))
+					.subscribe();
+		} else if (isDefaultUp) {
+			trySendAndPersist("default", processorDefaultUrl, paymentSent)
+					.filter(Boolean::booleanValue)
+					.switchIfEmpty(requeue(payment))
+					.subscribe();
+		} else if (isFallbackUp) {
+			trySendAndPersist("fallback", processorFallbackUrl, paymentSent)
 					.filter(Boolean::booleanValue)
 					.switchIfEmpty(requeue(payment))
 					.subscribe();
@@ -109,6 +125,7 @@ public class PaymentService {
 	}
 
 	public Mono<PaymentsSummaryResponse> getPaymentsSummary(String from, String to) {
+
 		List<String> commandAndArgs = getRedisData(from, to);
 
 		return reactivePersistedRedisTemplate.execute(
@@ -131,7 +148,7 @@ public class PaymentService {
 		commandAndArgs.add("sum");
 		commandAndArgs.add("9999999999999");
 		commandAndArgs.add("FILTER");
-		commandAndArgs.add("processor=default");
+		commandAndArgs.add("processor=(default,fallback)");
 		return commandAndArgs;
 	}
 
@@ -139,33 +156,50 @@ public class PaymentService {
 
 		long defaultCount = 0;
 		long defaultAmountCents = 0;
+		long fallbackCount = 0;
+		long fallbackAmountCents = 0;
 
 		for (Object seriesDataObject : rawResult) {
 			List<?> seriesData = (List<?>) seriesDataObject;
 			List<?> labelsList = (List<?>) seriesData.get(1);
 
+			String processor = "";
 			String type = "";
+
 			for (Object labelPairObject : labelsList) {
 				List<?> labelPair = (List<?>) labelPairObject;
 				String labelName = (String) labelPair.get(0);
-				if ("type".equals(labelName)) {
-					type = (String) labelPair.get(1);
-					break;
+				String labelValue = (String) labelPair.get(1);
+				if ("processor".equals(labelName)) {
+					processor = labelValue;
+				} else if ("type".equals(labelName)) {
+					type = labelValue;
 				}
 			}
 
 			List<?> dataPointsList = (List<?>) seriesData.get(2);
 
-			if (!dataPointsList.isEmpty()) {
-				long value = Long.parseLong((String) ((List<?>) dataPointsList.get(0)).get(1));
-				if ("count".equals(type)) {
-					defaultCount = value;
-				} else {
-					defaultAmountCents = value;
+			switch (processor) {
+			case "default":
+				if (!dataPointsList.isEmpty()) {
+					long value = Long.parseLong((String) ((List<?>) dataPointsList.get(0)).get(1));
+					if ("count".equals(type)) defaultCount = value;
+					else defaultAmountCents = value;
 				}
+				break;
+			case "fallback":
+				if (!dataPointsList.isEmpty()) {
+					long value = Long.parseLong((String) ((List<?>) dataPointsList.get(0)).get(1));
+					if ("count".equals(type)) fallbackCount = value;
+					else fallbackAmountCents = value;
+				}
+				break;
 			}
 		}
 
-		return new PaymentsSummaryResponse(new Summary(defaultCount, BigDecimal.valueOf(defaultAmountCents, 2)), Summary.EMPTY);
+		Summary defaultSummary = new Summary(defaultCount, BigDecimal.valueOf(defaultAmountCents, 2));
+		Summary fallbackSummary = new Summary(fallbackCount, BigDecimal.valueOf(fallbackAmountCents, 2));
+
+		return new PaymentsSummaryResponse(defaultSummary, fallbackSummary);
 	}
 }
