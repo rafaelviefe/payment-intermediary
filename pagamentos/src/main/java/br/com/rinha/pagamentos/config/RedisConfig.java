@@ -61,8 +61,6 @@ public class RedisConfig {
 			redisTemplate.execute((RedisConnection connection) -> {
 				createTimeSeriesIfNotExists(connection, "payments:amount:ts:default", "type", "amount", "processor", "default");
 				createTimeSeriesIfNotExists(connection, "payments:count:ts:default", "type", "count", "processor", "default");
-				createTimeSeriesIfNotExists(connection, "payments:amount:ts:fallback", "type", "amount", "processor", "fallback");
-				createTimeSeriesIfNotExists(connection, "payments:count:ts:fallback", "type", "count", "processor", "fallback");
 				return null;
 			});
 		};

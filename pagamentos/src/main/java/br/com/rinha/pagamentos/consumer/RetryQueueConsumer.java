@@ -46,9 +46,8 @@ public class RetryQueueConsumer implements ApplicationListener<ApplicationReadyE
 
 	private Mono<Void> consumeFromQueue() {
 		return Flux.defer(() -> {
-					boolean canProcess = processorHealthMonitor.isDefaultProcessorAvailable() || processorHealthMonitor.isFallbackProcessorAvailable();
 
-					if (canProcess) {
+					if (processorHealthMonitor.isDefaultProcessorAvailable()) {
 						return reactiveRedisTemplate.opsForList()
 								.rightPop(PROCESSING_QUEUE_KEY, Duration.ofSeconds(1));
 					} else {
